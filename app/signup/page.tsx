@@ -1,6 +1,6 @@
 'use client';
 
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
 import { useRouter } from 'next/navigation';
 import { slugify } from '@/lib/utils/slugify';
 
@@ -28,9 +28,10 @@ interface BusinessHours {
 
 export default function SignupPage() {
   const router = useRouter();
+  const [hasMounted, setHasMounted] = useState(false);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
-  
+
   const [businessName, setBusinessName] = useState('');
   const [whatsapp, setWhatsapp] = useState('');
   const [accessCode, setAccessCode] = useState('');
@@ -43,8 +44,7 @@ export default function SignupPage() {
   const [services, setServices] = useState<Service[]>([
     { name: '', duration: 30, price: 0 }
   ]);
-  
-  // Business hours state
+
   const [hours, setHours] = useState<BusinessHours>({
     monday: { open: '09:00', close: '18:00', closed: false },
     tuesday: { open: '09:00', close: '18:00', closed: false },
@@ -55,21 +55,15 @@ export default function SignupPage() {
     sunday: { open: '09:00', close: '18:00', closed: true }
   });
 
+  useEffect(() => { setHasMounted(true); }, []);
+  if (!hasMounted) return null;
+
   const updateHours = (day: keyof BusinessHours, field: keyof DayHours, value: string | boolean) => {
-    setHours(prev => ({
-      ...prev,
-      [day]: { ...prev[day], [field]: value }
-    }));
+    setHours(prev => ({ ...prev, [day]: { ...prev[day], [field]: value } }));
   };
 
-  const addService = () => {
-    setServices([...services, { name: '', duration: 30, price: 0 }]);
-  };
-
-  const removeService = (index: number) => {
-    setServices(services.filter((_, i) => i !== index));
-  };
-
+  const addService = () => setServices([...services, { name: '', duration: 30, price: 0 }]);
+  const removeService = (index: number) => setServices(services.filter((_, i) => i !== index));
   const updateService = (index: number, field: keyof Service, value: string | number) => {
     const updated = [...services];
     updated[index] = { ...updated[index], [field]: value };
@@ -81,32 +75,6 @@ export default function SignupPage() {
     setLoading(true);
     setError('');
 
-    if (!businessName.trim()) {
-      setError('Business name required');
-      setLoading(false);
-      return;
-    }
-    if (!whatsapp.trim()) {
-      setError('WhatsApp number required');
-      setLoading(false);
-      return;
-    }
-    if (!accessCode.trim() || accessCode.length !== 4) {
-      setError('4-digit access code required');
-      setLoading(false);
-      return;
-    }
-    if (requireDeposit && (!bankName || !bankAccount || !accountName)) {
-      setError('Bank details required for deposit collection');
-      setLoading(false);
-      return;
-    }
-    if (services.length === 0 || !services[0].name) {
-      setError('At least one service required');
-      setLoading(false);
-      return;
-    }
-
     const slug = slugify(businessName);
     const validServices = services.filter(s => s.name.trim() !== '');
 
@@ -116,26 +84,22 @@ export default function SignupPage() {
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           name: businessName,
-          whatsapp: whatsapp,
-          slug: slug,
+          whatsapp,
+          slug,
           access_code: accessCode,
-          capacity: capacity,
+          capacity,
           require_deposit: requireDeposit,
           deposit_amount: depositPercentage,
           bank_name: bankName,
           bank_account: bankAccount,
           account_name: accountName,
           services: validServices,
-          hours: hours
+          hours
         })
       });
 
       const data = await response.json();
-
-      if (!response.ok) {
-        throw new Error(data.error || 'Failed to create business');
-      }
-
+      if (!response.ok) throw new Error(data.error || 'Failed to create business');
       router.push(`/${data.business.slug}/dashboard?code=${accessCode}`);
     } catch (err: any) {
       setError(err.message);
@@ -144,244 +108,108 @@ export default function SignupPage() {
   };
 
   const days = [
-    { key: 'monday', label: 'Monday' },
-    { key: 'tuesday', label: 'Tuesday' },
-    { key: 'wednesday', label: 'Wednesday' },
-    { key: 'thursday', label: 'Thursday' },
-    { key: 'friday', label: 'Friday' },
-    { key: 'saturday', label: 'Saturday' },
+    { key: 'monday', label: 'Monday' }, { key: 'tuesday', label: 'Tuesday' },
+    { key: 'wednesday', label: 'Wednesday' }, { key: 'thursday', label: 'Thursday' },
+    { key: 'friday', label: 'Friday' }, { key: 'saturday', label: 'Saturday' },
     { key: 'sunday', label: 'Sunday' }
   ];
 
   return (
-    <div className="min-h-screen bg-gray-50 py-6 px-4 sm:py-12">
-      <div className="max-w-2xl mx-auto">
-        <div className="text-center mb-6">
-          <h1 className="text-2xl font-bold">Start Your Free Trial</h1>
-          <p className="text-gray-600">14 days free. No credit card required.</p>
+    <div className="min-h-screen bg-[#0a0a0a] text-[#f0ede6] py-10 px-4 font-sans">
+      <div className="max-w-2xl mx-auto bg-[#141414] rounded-3xl shadow-2xl border border-[#D4A843]/20 overflow-hidden">
+        
+        <div className="bg-[#D4A843] p-8 text-[#0a0a0a] text-center">
+          <h1 className="text-2xl font-black uppercase tracking-tighter">NaijaTimely</h1>
+          <p className="text-xs font-bold opacity-80 uppercase tracking-widest">Business Registration</p>
         </div>
 
-        <div className="bg-white rounded-xl shadow-sm p-6">
-          {error && (
-            <div className="bg-red-50 border border-red-200 text-red-700 px-4 py-3 rounded-lg mb-6">
-              {error}
-            </div>
-          )}
+        <form onSubmit={handleSubmit} className="p-8 space-y-10">
+          {error && <div className="bg-red-500/10 border border-red-500/50 text-red-400 p-4 rounded-xl text-sm font-bold">{error}</div>}
 
-          <form onSubmit={handleSubmit} className="space-y-5">
-            {/* Basic Info */}
-            <div>
-              <label className="block text-sm font-semibold mb-1">Business Name *</label>
-              <input
-                type="text"
-                value={businessName}
-                onChange={(e) => setBusinessName(e.target.value)}
-                className="w-full px-4 py-3 border rounded-lg"
-                placeholder="e.g., Ahmed's Barbing Salon"
-                required
-              />
+          {/* section 1: Identity */}
+          <div className="space-y-4">
+            <label className="text-[10px] font-black text-[#D4A843] uppercase tracking-[0.2em] block">1. Business Identity</label>
+            <input type="text" placeholder="Business Name" value={businessName} onChange={(e) => setBusinessName(e.target.value)} className="w-full bg-[#1a1a1a] border border-[#f0ede6]/10 p-4 rounded-xl text-[#f0ede6] outline-none focus:border-[#D4A843] transition-all" required />
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+              <input type="tel" placeholder="WhatsApp Number" value={whatsapp} onChange={(e) => setWhatsapp(e.target.value)} className="w-full bg-[#1a1a1a] border border-[#f0ede6]/10 p-4 rounded-xl text-[#f0ede6] outline-none focus:border-[#D4A843]" required />
+              <input type="password" placeholder="4-Digit Pin" value={accessCode} onChange={(e) => setAccessCode(e.target.value.replace(/\D/g, '').slice(0,4))} className="w-full bg-[#1a1a1a] border border-[#f0ede6]/10 p-4 rounded-xl text-[#f0ede6] outline-none focus:border-[#D4A843] tracking-widest" maxLength={4} required />
             </div>
+          </div>
 
-            <div>
-              <label className="block text-sm font-semibold mb-1">WhatsApp Number *</label>
-              <input
-                type="tel"
-                value={whatsapp}
-                onChange={(e) => setWhatsapp(e.target.value)}
-                className="w-full px-4 py-3 border rounded-lg"
-                placeholder="e.g., 08031234567"
-                required
-              />
-            </div>
-
-            <div>
-              <label className="block text-sm font-semibold mb-1">Dashboard Access Code (4 digits) *</label>
-              <input
-                type="text"
-                value={accessCode}
-                onChange={(e) => setAccessCode(e.target.value.slice(0,4))}
-                className="w-full px-4 py-3 border rounded-lg font-mono text-lg"
-                placeholder="1234"
-                maxLength={4}
-                required
-              />
-            </div>
-
-            <div>
-              <label className="block text-sm font-semibold mb-1">Capacity (customers per slot)</label>
-              <input
-                type="number"
-                value={capacity}
-                onChange={(e) => setCapacity(parseInt(e.target.value) || 1)}
-                className="w-full px-4 py-3 border rounded-lg"
-                min={1}
-              />
-              <p className="text-xs text-gray-500 mt-1">How many customers can you serve at the same time?</p>
-            </div>
-
-            {/* Business Hours Section */}
-            <div className="border-t pt-4">
-              <label className="block text-sm font-semibold mb-3">Business Hours</label>
-              <div className="space-y-3">
-                {days.map((day) => (
-                  <div key={day.key} className="flex flex-wrap items-center gap-3">
-                    <div className="w-24">
-                      <span className="text-sm font-medium">{day.label}</span>
+          {/* section 2: Collapsible Availability */}
+          <div className="space-y-4">
+            <label className="text-[10px] font-black text-[#D4A843] uppercase tracking-[0.2em] block">2. Working Hours</label>
+            <div className="grid gap-2">
+              {days.map((day) => (
+                <div key={day.key} className="bg-[#1a1a1a] rounded-xl border border-[#f0ede6]/5 overflow-hidden transition-all duration-300">
+                  <div className="flex items-center justify-between p-4 cursor-pointer" onClick={() => updateHours(day.key as keyof BusinessHours, 'closed', !hours[day.key as keyof BusinessHours].closed)}>
+                    <div className="flex items-center gap-3">
+                      <input type="checkbox" checked={!hours[day.key as keyof BusinessHours].closed} readOnly className="w-5 h-5 accent-[#D4A843]" />
+                      <span className={`text-sm font-bold ${hours[day.key as keyof BusinessHours].closed ? 'opacity-30' : 'text-[#D4A843]'}`}>{day.label}</span>
                     </div>
-                    <label className="flex items-center gap-2">
-                      <input
-                        type="checkbox"
-                        checked={!hours[day.key as keyof BusinessHours].closed}
-                        onChange={(e) => updateHours(day.key as keyof BusinessHours, 'closed', !e.target.checked)}
-                        className="w-4 h-4"
-                      />
-                      <span className="text-sm">Open</span>
-                    </label>
-                    {!hours[day.key as keyof BusinessHours].closed && (
-                      <>
-                        <input
-                          type="time"
-                          value={hours[day.key as keyof BusinessHours].open}
-                          onChange={(e) => updateHours(day.key as keyof BusinessHours, 'open', e.target.value)}
-                          className="px-3 py-2 border rounded-lg w-28"
-                        />
-                        <span>to</span>
-                        <input
-                          type="time"
-                          value={hours[day.key as keyof BusinessHours].close}
-                          onChange={(e) => updateHours(day.key as keyof BusinessHours, 'close', e.target.value)}
-                          className="px-3 py-2 border rounded-lg w-28"
-                        />
-                      </>
-                    )}
+                    <span className="text-[10px] font-bold opacity-40">{hours[day.key as keyof BusinessHours].closed ? 'CLOSED' : 'OPEN'}</span>
                   </div>
-                ))}
-              </div>
+                  
+                  {!hours[day.key as keyof BusinessHours].closed && (
+                    <div className="px-4 pb-4 pt-2 flex items-center gap-4 bg-[#0d0d0d] animate-in slide-in-from-top-2 duration-200">
+                      <div className="flex-1">
+                        <p className="text-[9px] font-bold opacity-40 mb-1">OPENING</p>
+                        <input type="time" value={hours[day.key as keyof BusinessHours].open} onChange={(e) => updateHours(day.key as keyof BusinessHours, 'open', e.target.value)} className="w-full bg-[#141414] border border-[#D4A843]/20 p-2 rounded text-xs font-bold text-[#D4A843]" />
+                      </div>
+                      <div className="flex-1">
+                        <p className="text-[9px] font-bold opacity-40 mb-1">CLOSING</p>
+                        <input type="time" value={hours[day.key as keyof BusinessHours].close} onChange={(e) => updateHours(day.key as keyof BusinessHours, 'close', e.target.value)} className="w-full bg-[#141414] border border-[#D4A843]/20 p-2 rounded text-xs font-bold text-[#D4A843]" />
+                      </div>
+                    </div>
+                  )}
+                </div>
+              ))}
             </div>
+          </div>
 
-            {/* Deposit Section */}
-            <div className="border-t pt-4">
-              <label className="block text-sm font-semibold mb-2">Booking Commitment</label>
-              <div className="space-y-3">
-                <label className="flex items-center gap-3 p-3 border rounded-lg cursor-pointer">
-                  <input
-                    type="radio"
-                    checked={!requireDeposit}
-                    onChange={() => setRequireDeposit(false)}
-                  />
-                  <div>
-                    <p className="font-medium">Trust-based booking</p>
-                    <p className="text-xs text-gray-500">Customers book freely. You mark no-shows.</p>
-                  </div>
-                </label>
-                <label className="flex items-center gap-3 p-3 border rounded-lg cursor-pointer">
-                  <input
-                    type="radio"
-                    checked={requireDeposit}
-                    onChange={() => setRequireDeposit(true)}
-                  />
-                  <div>
-                    <p className="font-medium">Require deposit</p>
-                    <p className="text-xs text-gray-500">Customers pay percentage to confirm.</p>
-                  </div>
-                </label>
-              </div>
+          {/* section 3: Commitment */}
+          <div className="space-y-4">
+            <label className="text-[10px] font-black text-[#D4A843] uppercase tracking-[0.2em] block">3. Booking Policy</label>
+            <div className="flex gap-2">
+              <button type="button" onClick={() => setRequireDeposit(false)} className={`flex-1 p-4 rounded-xl border-2 transition-all ${!requireDeposit ? 'border-[#D4A843] bg-[#D4A843]/5' : 'border-[#f0ede6]/10 opacity-30'}`}>
+                <p className="text-sm font-bold">Standard</p>
+              </button>
+              <button type="button" onClick={() => setRequireDeposit(true)} className={`flex-1 p-4 rounded-xl border-2 transition-all ${requireDeposit ? 'border-[#D4A843] bg-[#D4A843]/5' : 'border-[#f0ede6]/10 opacity-30'}`}>
+                <p className="text-sm font-bold">Deposit Required</p>
+              </button>
             </div>
-
             {requireDeposit && (
-              <>
-                <div>
-                  <label className="block text-sm font-semibold mb-1">Deposit Percentage (%)</label>
-                  <input
-                    type="number"
-                    value={depositPercentage}
-                    onChange={(e) => setDepositPercentage(parseInt(e.target.value) || 0)}
-                    className="w-full px-4 py-3 border rounded-lg"
-                    min={0}
-                    max={100}
-                  />
-                  <p className="text-xs text-gray-500">Example: 10% of ₦5,000 = ₦500 deposit</p>
-                </div>
-
-                <div className="bg-gray-50 rounded-lg p-4 space-y-3">
-                  <p className="text-sm font-semibold">Bank Account for Deposits</p>
-                  <input
-                    type="text"
-                    value={bankName}
-                    onChange={(e) => setBankName(e.target.value)}
-                    className="w-full px-4 py-3 border rounded-lg"
-                    placeholder="Bank Name"
-                  />
-                  <input
-                    type="text"
-                    value={bankAccount}
-                    onChange={(e) => setBankAccount(e.target.value)}
-                    className="w-full px-4 py-3 border rounded-lg"
-                    placeholder="Account Number"
-                  />
-                  <input
-                    type="text"
-                    value={accountName}
-                    onChange={(e) => setAccountName(e.target.value)}
-                    className="w-full px-4 py-3 border rounded-lg"
-                    placeholder="Account Name"
-                  />
-                </div>
-              </>
+              <div className="p-4 bg-[#D4A843]/5 border border-[#D4A843]/20 rounded-xl space-y-3">
+                <input type="number" placeholder="Deposit %" value={depositPercentage} onChange={(e) => setDepositPercentage(parseInt(e.target.value))} className="w-full bg-[#0a0a0a] p-3 rounded-lg border border-[#D4A843]/20 text-[#D4A843]" />
+                <input type="text" placeholder="Bank Name" value={bankName} onChange={(e) => setBankName(e.target.value)} className="w-full bg-[#0a0a0a] p-3 rounded-lg border border-[#D4A843]/20 text-[#f0ede6]" />
+                <input type="text" placeholder="Account Number" value={bankAccount} onChange={(e) => setBankAccount(e.target.value)} className="w-full bg-[#0a0a0a] p-3 rounded-lg border border-[#D4A843]/20 text-[#f0ede6]" />
+                <input type="text" placeholder="Account Name" value={accountName} onChange={(e) => setAccountName(e.target.value)} className="w-full bg-[#0a0a0a] p-3 rounded-lg border border-[#D4A843]/20 text-[#f0ede6]" />
+              </div>
             )}
+          </div>
 
-            {/* Services */}
-            <div className="border-t pt-4">
-              <div className="flex justify-between items-center mb-3">
-                <label className="text-sm font-semibold">Services *</label>
-                <button type="button" onClick={addService} className="text-sm text-green-600">+ Add Service</button>
-              </div>
-              <div className="space-y-4">
-                {services.map((service, index) => (
-                  <div key={index} className="bg-gray-50 rounded-lg p-4">
-                    <input
-                      type="text"
-                      value={service.name}
-                      onChange={(e) => updateService(index, 'name', e.target.value)}
-                      className="w-full px-3 py-2 border rounded-lg mb-2"
-                      placeholder="Service name"
-                      required
-                    />
-                    <div className="grid grid-cols-2 gap-2">
-                      <input
-                        type="number"
-                        value={service.duration}
-                        onChange={(e) => updateService(index, 'duration', parseInt(e.target.value))}
-                        className="px-3 py-2 border rounded-lg"
-                        placeholder="Minutes"
-                      />
-                      <input
-                        type="number"
-                        value={service.price}
-                        onChange={(e) => updateService(index, 'price', parseInt(e.target.value))}
-                        className="px-3 py-2 border rounded-lg"
-                        placeholder="Price ₦"
-                      />
-                    </div>
-                    {services.length > 1 && (
-                      <button type="button" onClick={() => removeService(index)} className="mt-2 text-sm text-red-600">
-                        Remove
-                      </button>
-                    )}
-                  </div>
-                ))}
-              </div>
+          {/* section 4: Services */}
+          <div className="space-y-4">
+            <div className="flex justify-between items-center">
+              <label className="text-[10px] font-black text-[#D4A843] uppercase tracking-[0.2em]">4. Services</label>
+              <button type="button" onClick={addService} className="text-xs font-bold text-[#D4A843] underline">+ Add</button>
             </div>
+            {services.map((s, i) => (
+              <div key={i} className="p-4 bg-[#1a1a1a] rounded-xl border border-[#f0ede6]/5 relative flex flex-col gap-3">
+                <input type="text" placeholder="Service Name" value={s.name} onChange={(e) => updateService(i, 'name', e.target.value)} className="bg-transparent border-b border-[#f0ede6]/10 pb-2 outline-none focus:border-[#D4A843]" />
+                <div className="flex gap-4">
+                  <input type="number" placeholder="Mins" value={s.duration} onChange={(e) => updateService(i, 'duration', parseInt(e.target.value))} className="flex-1 bg-[#0a0a0a] p-2 rounded text-xs border border-[#f0ede6]/5 text-[#f0ede6]" />
+                  <input type="number" placeholder="Price ₦" value={s.price} onChange={(e) => updateService(i, 'price', parseInt(e.target.value))} className="flex-1 bg-[#0a0a0a] p-2 rounded text-xs border border-[#f0ede6]/5 text-[#f0ede6]" />
+                </div>
+                {services.length > 1 && <button type="button" onClick={() => removeService(i)} className="absolute top-2 right-2 text-red-500 opacity-50">✕</button>}
+              </div>
+            ))}
+          </div>
 
-            <button
-              type="submit"
-              disabled={loading}
-              className="w-full bg-green-600 text-white font-semibold py-3 rounded-lg disabled:opacity-50"
-            >
-              {loading ? 'Creating...' : 'Start Free Trial'}
-            </button>
-          </form>
-        </div>
+          <button type="submit" disabled={loading} className="w-full bg-[#D4A843] text-[#0a0a0a] font-black py-5 rounded-2xl shadow-xl hover:bg-[#F0C96A] transition-all disabled:opacity-30 active:scale-95">
+            {loading ? 'Creating Your Account...' : 'Launch NaijaTimely'}
+          </button>
+        </form>
       </div>
     </div>
   );

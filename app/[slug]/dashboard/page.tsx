@@ -42,24 +42,27 @@ export default function DashboardPage() {
   const [error, setError] = useState('');
   const [showFeedbackModal, setShowFeedbackModal] = useState<Booking | null>(null);
   const [feedbackText, setFeedbackText] = useState('');
+  const [copied, setCopied] = useState(false);
 
-  // Extract slug correctly
   useEffect(() => {
     const path = window.location.pathname;
     const slugFromPath = path.split('/')[1];
     setSlug(slugFromPath);
   }, []);
 
-  // Fetch data
+  const formatWhatsApp = (phone: string) => {
+    const cleaned = phone.replace(/\D/g, '');
+    if (cleaned.startsWith('0')) return '234' + cleaned.substring(1);
+    if (cleaned.length === 10) return '234' + cleaned;
+    return cleaned;
+  };
+
   useEffect(() => {
     if (!slug || !accessCode) return;
 
     async function loadDashboard() {
       setLoading(true);
-      setError('');
-
       try {
-        // Get business
         const { data: businessData, error: bizError } = await supabase
           .from('businesses')
           .select('*')
@@ -69,39 +72,28 @@ export default function DashboardPage() {
 
         if (bizError || !businessData) {
           setError('Invalid access code');
-          setLoading(false);
           return;
         }
 
         setBusiness(businessData);
 
-        // Get all bookings for this business
         const { data: bookingsData, error: bookingsError } = await supabase
           .from('bookings')
           .select('*')
           .eq('business_id', businessData.id)
           .order('booking_time', { ascending: true });
 
-        if (bookingsError) {
-          console.error('Bookings error:', bookingsError);
-          setLoading(false);
-          return;
-        }
+        if (bookingsError) throw bookingsError;
 
-        // Separate bookings
         const pending: Booking[] = [];
         const confirmed: Booking[] = [];
         const completed: Booking[] = [];
 
-        for (const booking of bookingsData || []) {
-          if (booking.status === 'completed') {
-            completed.push(booking);
-          } else if (booking.status === 'pending' || !booking.deposit_paid) {
-            pending.push(booking);
-          } else {
-            confirmed.push(booking);
-          }
-        }
+        (bookingsData || []).forEach(booking => {
+          if (booking.status === 'completed') completed.push(booking);
+          else if (booking.status === 'pending' || !booking.deposit_paid) pending.push(booking);
+          else confirmed.push(booking);
+        });
 
         setPendingBookings(pending);
         setConfirmedBookings(confirmed);
@@ -112,257 +104,168 @@ export default function DashboardPage() {
         setLoading(false);
       }
     }
-
     loadDashboard();
   }, [slug, accessCode]);
 
   const confirmBooking = async (booking: Booking) => {
     const { error } = await supabase
       .from('bookings')
-      .update({ 
-        status: 'confirmed',
-        deposit_paid: true 
-      })
+      .update({ status: 'confirmed', deposit_paid: true })
       .eq('id', booking.id);
 
     if (!error && business) {
-      const message = `🔔 New Confirmed Booking!\n\nCustomer: ${booking.customer_name}\nService: ${booking.service_name}\nTime: ${new Date(booking.booking_time).toLocaleString()}\nPhone: ${booking.customer_phone}`;
+      setPendingBookings(prev => prev.filter(b => b.id !== booking.id));
+      setConfirmedBookings(prev => [...prev, { ...booking, status: 'confirmed', deposit_paid: true }].sort((a, b) => new Date(a.booking_time).getTime() - new Date(b.booking_time).getTime()));
       
-      window.open(`https://wa.me/${business.whatsapp}?text=${encodeURIComponent(message)}`, '_blank');
-      window.location.reload();
+      const message = `🔔 *Booking Confirmed!*\n\nHello ${booking.customer_name}, your appointment for ${booking.service_name} at ${new Date(booking.booking_time).toLocaleString()} is now confirmed. See you soon!`;
+      window.open(`https://wa.me/${formatWhatsApp(booking.customer_phone)}?text=${encodeURIComponent(message)}`, '_blank');
     }
-  };
-
-  const markAsCompleted = async (booking: Booking) => {
-    setShowFeedbackModal(booking);
   };
 
   const submitFeedback = async () => {
     if (!showFeedbackModal) return;
-
     const { error } = await supabase
       .from('bookings')
-      .update({ 
-        status: 'completed',
-        feedback: feedbackText 
-      })
+      .update({ status: 'completed', feedback: feedbackText })
       .eq('id', showFeedbackModal.id);
 
     if (!error) {
-      const thankYouMessage = `🎉 Thank you for your service, ${showFeedbackModal.customer_name}!\n\nWould you like to book your next appointment?\n\nReply with:\n1 - Next week same time\n2 - Two weeks later\n3 - I'll book later`;
+      setConfirmedBookings(prev => prev.filter(b => b.id !== showFeedbackModal.id));
+      setCompletedBookings(prev => [{ ...showFeedbackModal, status: 'completed', feedback: feedbackText }, ...prev]);
       
-      window.open(`https://wa.me/${showFeedbackModal.customer_phone}?text=${encodeURIComponent(thankYouMessage)}`, '_blank');
-      window.location.reload();
+      const message = `🎉 *Thank you, ${showFeedbackModal.customer_name}!*\n\nYour appointment is complete. We'd love to see you again! Book next time at: naijatimely.ng/${business?.slug}`;
+      window.open(`https://wa.me/${formatWhatsApp(showFeedbackModal.customer_phone)}?text=${encodeURIComponent(message)}`, '_blank');
+      setShowFeedbackModal(null);
+      setFeedbackText('');
     }
-    setShowFeedbackModal(null);
-    setFeedbackText('');
   };
 
   const formatDate = (dateString: string) => {
     const date = new Date(dateString);
     const now = new Date();
-    const tomorrow = new Date(now);
-    tomorrow.setDate(tomorrow.getDate() + 1);
-    
     if (date.toDateString() === now.toDateString()) {
       return `Today, ${date.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}`;
-    } else if (date.toDateString() === tomorrow.toDateString()) {
-      return `Tomorrow, ${date.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}`;
     }
     return date.toLocaleDateString();
   };
 
-  if (loading) {
-    return (
-      <div className="min-h-screen bg-gray-50 flex items-center justify-center">
-        <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-green-600"></div>
-      </div>
-    );
-  }
+  if (loading) return <div className="min-h-screen bg-[#0a0a0a] flex items-center justify-center"><div className="w-10 h-10 border-4 border-[#D4A843] border-t-transparent rounded-full animate-spin"></div></div>;
 
-  if (error) {
-    return (
-      <div className="min-h-screen bg-gray-50 flex items-center justify-center px-4">
-        <div className="bg-white rounded-lg p-8 text-center max-w-md">
-          <div className="text-red-600 text-5xl mb-4">🔒</div>
-          <h1 className="text-xl font-bold">Access Denied</h1>
-          <p className="text-gray-600">{error}</p>
-        </div>
+  if (error) return (
+    <div className="min-h-screen bg-[#0a0a0a] flex items-center justify-center p-6">
+      <div className="bg-[#141414] border border-red-500/20 p-8 rounded-3xl text-center max-w-sm">
+        <h1 className="text-[#D4A843] text-2xl font-black mb-2 uppercase tracking-tighter">Access Denied</h1>
+        <p className="text-gray-500 text-sm mb-6">{error}</p>
+        <button onClick={() => window.location.reload()} className="bg-[#D4A843] text-[#0a0a0a] px-8 py-3 rounded-2xl font-black text-xs tracking-widest">RETRY</button>
       </div>
-    );
-  }
-
-  if (!business) return null;
+    </div>
+  );
 
   return (
-    <div className="min-h-screen bg-gray-50">
-      <div className="bg-white border-b sticky top-0 z-10">
-        <div className="max-w-6xl mx-auto px-4 py-4">
-          <div className="flex justify-between items-center">
-            <div>
-              <h1 className="text-xl font-bold">{business.name}</h1>
-              <p className="text-sm text-gray-500">
-                Booking link: naijatimely.ng/{business.slug}
-              </p>
-            </div>
-            <div className="text-right">
-              <p className="text-xs text-gray-400">Access Code</p>
-              <p className="text-lg font-mono font-bold">{accessCode}</p>
-            </div>
+    <div className="min-h-screen bg-[#0a0a0a] text-[#f0ede6] font-sans pb-20">
+      <div className="bg-[#141414] border-b border-[#D4A843]/10 sticky top-0 z-20">
+        <div className="max-w-4xl mx-auto px-6 py-4 flex justify-between items-center">
+          <div>
+            <h1 className="text-lg font-black uppercase tracking-tighter text-[#D4A843]">{business?.name}</h1>
+            <button onClick={() => { navigator.clipboard.writeText(`naijatimely.ng/${business?.slug}`); setCopied(true); setTimeout(() => setCopied(false), 2000); }} className="text-[10px] font-bold opacity-50 flex items-center gap-1">
+              naijatimely.ng/{business?.slug} {copied ? '✅ COPIED' : '📋 COPY'}
+            </button>
+          </div>
+          <div className="bg-[#0a0a0a] border border-[#D4A843]/30 px-4 py-2 rounded-xl text-center">
+            <p className="text-[8px] font-black opacity-40 uppercase tracking-widest">PIN</p>
+            <p className="text-sm font-mono font-bold text-[#D4A843] tracking-[0.2em]">{accessCode}</p>
           </div>
         </div>
       </div>
 
-      <div className="max-w-6xl mx-auto px-4 py-8">
-        <div className="grid grid-cols-3 gap-4 mb-6">
-          <div className="bg-yellow-50 rounded-lg p-4 border border-yellow-200">
-            <p className="text-sm text-yellow-800">Pending Deposit</p>
-            <p className="text-2xl font-bold text-yellow-900">{pendingBookings.length}</p>
-          </div>
-          <div className="bg-green-50 rounded-lg p-4 border border-green-200">
-            <p className="text-sm text-green-800">Confirmed</p>
-            <p className="text-2xl font-bold text-green-900">{confirmedBookings.length}</p>
-          </div>
-          <div className="bg-gray-50 rounded-lg p-4 border border-gray-200">
-            <p className="text-sm text-gray-600">Completed</p>
-            <p className="text-2xl font-bold text-gray-900">{completedBookings.length}</p>
-          </div>
+      <div className="max-w-4xl mx-auto px-6 py-8 space-y-8">
+        <div className="grid grid-cols-3 gap-3">
+          {[
+            { label: 'PENDING', count: pendingBookings.length, color: 'text-orange-400' },
+            { label: 'ACTIVE', count: confirmedBookings.length, color: 'text-[#D4A843]' },
+            { label: 'DONE', count: completedBookings.length, color: 'text-gray-500' }
+          ].map((stat, i) => (
+            <div key={i} className="bg-[#141414] p-5 rounded-[24px] border border-[#f0ede6]/5 text-center shadow-lg">
+              <p className="text-[9px] font-black opacity-30 mb-1 tracking-widest uppercase">{stat.label}</p>
+              <p className={`text-2xl font-black ${stat.color}`}>{stat.count}</p>
+            </div>
+          ))}
         </div>
 
-        {/* Pending Bookings */}
         {pendingBookings.length > 0 && (
-          <div className="bg-white rounded-lg border border-yellow-200 mb-6">
-            <div className="bg-yellow-50 px-6 py-3 border-b border-yellow-200">
-              <h2 className="font-semibold text-yellow-800">⏳ Awaiting Deposit Confirmation</h2>
-              <p className="text-xs text-yellow-600">Customer claims they paid. Verify bank alert then confirm.</p>
-            </div>
-            <div className="divide-y">
-              {pendingBookings.map((booking) => (
-                <div key={booking.id} className="p-4 hover:bg-gray-50">
-                  <div className="flex flex-wrap justify-between items-start gap-3">
-                    <div className="flex-1">
-                      <p className="font-medium">{booking.customer_name}</p>
-                      <p className="text-sm text-gray-600">{booking.service_name}</p>
-                      <p className="text-sm text-gray-500">📞 {booking.customer_phone}</p>
-                      {booking.deposit_amount && booking.deposit_amount > 0 && (
-                        <p className="text-xs text-yellow-600 mt-1">Deposit: ₦{booking.deposit_amount}</p>
-                      )}
-                    </div>
-                    <div className="text-right">
-                      <p className="text-sm text-gray-600">{formatDate(booking.booking_time)}</p>
-                      <button
-                        onClick={() => confirmBooking(booking)}
-                        className="mt-2 bg-green-600 text-white px-4 py-1 rounded text-sm hover:bg-green-700"
-                      >
-                        Confirm Payment
-                      </button>
-                    </div>
+          <div className="space-y-4 animate-in fade-in duration-500">
+            <h2 className="text-[10px] font-black text-[#D4A843] uppercase tracking-[0.3em] pl-2">Awaiting Payment</h2>
+            {pendingBookings.map((b) => (
+              <div key={b.id} className="bg-[#141414] border-l-4 border-orange-500 p-6 rounded-3xl flex flex-col gap-4 shadow-xl">
+                <div className="flex justify-between items-start">
+                  <div>
+                    <p className="font-black text-sm uppercase tracking-tight">{b.customer_name}</p>
+                    <p className="text-xs opacity-50 font-medium">{b.service_name}</p>
+                    <p className="text-xs text-[#D4A843] font-black mt-2">₦{b.deposit_amount} DEPOSIT REQUIRED</p>
                   </div>
+                  <p className="text-[9px] font-black bg-[#0a0a0a] px-3 py-1 rounded-full border border-[#f0ede6]/10 uppercase tracking-tighter">{formatDate(b.booking_time)}</p>
                 </div>
-              ))}
-            </div>
+                <button onClick={() => confirmBooking(b)} className="w-full bg-[#D4A843] text-[#0a0a0a] py-4 rounded-2xl font-black text-xs uppercase tracking-widest active:scale-95 transition-all shadow-lg shadow-[#D4A843]/10">
+                  Confirm Bank Alert
+                </button>
+              </div>
+            ))}
           </div>
         )}
 
-        {/* Confirmed Bookings */}
-        {confirmedBookings.length > 0 && (
-          <div className="bg-white rounded-lg border border-green-200 mb-6">
-            <div className="bg-green-50 px-6 py-3 border-b border-green-200">
-              <h2 className="font-semibold text-green-800">✅ Confirmed Bookings</h2>
+        <div className="space-y-4">
+          <h2 className="text-[10px] font-black text-[#D4A843] uppercase tracking-[0.3em] pl-2">Today's Schedule</h2>
+          {confirmedBookings.length === 0 ? (
+            <div className="p-16 border-2 border-dashed border-[#f0ede6]/5 rounded-[40px] text-center">
+              <p className="text-[10px] opacity-20 font-black uppercase tracking-[0.4em]">Calendar Empty</p>
             </div>
-            <div className="divide-y">
-              {confirmedBookings.map((booking) => (
-                <div key={booking.id} className="p-4 hover:bg-gray-50">
-                  <div className="flex flex-wrap justify-between items-start gap-3">
-                    <div className="flex-1">
-                      <p className="font-medium">{booking.customer_name}</p>
-                      <p className="text-sm text-gray-600">{booking.service_name}</p>
-                      <p className="text-sm text-gray-500">📞 {booking.customer_phone}</p>
-                    </div>
-                    <div className="text-right">
-                      <p className="text-sm text-gray-600">{formatDate(booking.booking_time)}</p>
-                      <div className="flex gap-2 mt-2">
-                        <a
-                          href={`https://wa.me/${booking.customer_phone}?text=Reminder%3A%20Your%20${booking.service_name}%20is%20${formatDate(booking.booking_time)}`}
-                          target="_blank"
-                          className="text-xs text-green-600"
-                        >
-                          📱 Remind
-                        </a>
-                        <button
-                          onClick={() => markAsCompleted(booking)}
-                          className="text-xs text-blue-600"
-                        >
-                          ✅ Complete
-                        </button>
-                      </div>
-                    </div>
-                  </div>
-                </div>
-              ))}
-            </div>
-          </div>
-        )}
-
-        {/* Completed Bookings */}
-        {completedBookings.length > 0 && (
-          <div className="bg-white rounded-lg border border-gray-200">
-            <div className="bg-gray-50 px-6 py-3 border-b">
-              <h2 className="font-semibold">Completed</h2>
-            </div>
-            <div className="divide-y">
-              {completedBookings.slice(0, 10).map((booking) => (
-                <div key={booking.id} className="p-4 bg-gray-50">
-                  <div className="flex justify-between items-center">
+          ) : (
+            <div className="grid gap-4">
+              {confirmedBookings.map((b) => (
+                <div key={b.id} className="bg-[#141414] border border-[#f0ede6]/5 p-6 rounded-[32px] flex flex-col gap-5 shadow-xl hover:border-[#D4A843]/20 transition-all">
+                  <div className="flex justify-between items-start">
                     <div>
-                      <p className="font-medium">{booking.customer_name}</p>
-                      <p className="text-sm text-gray-500">{booking.service_name}</p>
-                      <p className="text-xs text-gray-400">{new Date(booking.booking_time).toLocaleDateString()}</p>
+                      <p className="font-black text-base uppercase tracking-tight">{b.customer_name}</p>
+                      <p className="text-xs opacity-50 font-medium">{b.service_name}</p>
                     </div>
-                    <span className="text-xs text-green-600">✓ Done</span>
+                    <p className="text-[10px] font-black text-[#D4A843] uppercase bg-[#D4A843]/10 px-3 py-1 rounded-full tracking-tighter">{formatDate(b.booking_time)}</p>
+                  </div>
+                  <div className="flex gap-3 mt-2">
+                    <a href={`https://wa.me/${formatWhatsApp(b.customer_phone)}`} target="_blank" className="flex-1 bg-[#1a1a1a] border border-[#f0ede6]/10 text-[#f0ede6] py-4 rounded-2xl font-black text-[10px] uppercase text-center tracking-[0.2em]">Message</a>
+                    <button onClick={() => setShowFeedbackModal(b)} className="flex-1 bg-[#D4A843] text-[#0a0a0a] py-4 rounded-2xl font-black text-[10px] uppercase tracking-[0.2em] active:scale-95 transition-all">Complete</button>
                   </div>
                 </div>
               ))}
             </div>
-          </div>
-        )}
+          )}
+        </div>
 
-        <div className="mt-6 bg-yellow-50 border border-yellow-200 rounded-lg p-4">
-          <p className="text-sm text-yellow-800">
-            ⏳ Free trial ends: {new Date(business.trial_end).toLocaleDateString()}
-          </p>
+        <div className="pt-10">
+          <div className="bg-[#D4A843]/5 border border-[#D4A843]/10 p-6 rounded-[32px] text-center">
+            <p className="text-[9px] font-black text-[#D4A843] tracking-[0.3em] uppercase opacity-60 mb-1">Trial Status</p>
+            <p className="text-xs font-bold text-[#f0ede6]">Expires {new Date(business.trial_end).toLocaleDateString('en-GB')}</p>
+          </div>
         </div>
       </div>
 
       {showFeedbackModal && (
-        <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50 p-4">
-          <div className="bg-white rounded-lg p-6 max-w-md w-full">
-            <h3 className="text-lg font-bold mb-4">Complete Booking</h3>
-            <p className="mb-2">
-              Customer: {showFeedbackModal.customer_name}
-              <br />
-              Service: {showFeedbackModal.service_name}
-            </p>
-            <textarea
-              value={feedbackText}
-              onChange={(e) => setFeedbackText(e.target.value)}
-              placeholder="Customer feedback (optional)"
-              className="w-full p-3 border rounded-lg mb-4"
-              rows={3}
+        <div className="fixed inset-0 bg-[#0a0a0a]/95 backdrop-blur-md flex items-center justify-center z-50 p-6">
+          <div className="bg-[#141414] border border-[#D4A843]/20 p-8 rounded-[40px] w-full max-w-sm shadow-2xl animate-in zoom-in-95 duration-200">
+            <p className="text-[10px] font-black text-[#D4A843] uppercase tracking-[0.3em] mb-6">Service Summary</p>
+            <div className="mb-8">
+              <p className="text-lg font-black uppercase tracking-tight mb-1">{showFeedbackModal.customer_name}</p>
+              <p className="text-sm opacity-50 font-medium">{showFeedbackModal.service_name}</p>
+            </div>
+            <textarea 
+              placeholder="Private Notes (Optional)" 
+              value={feedbackText} 
+              onChange={(e) => setFeedbackText(e.target.value)} 
+              className="w-full bg-[#0a0a0a] border border-[#f0ede6]/10 rounded-2xl p-5 text-sm mb-8 outline-none focus:border-[#D4A843] text-[#f0ede6] placeholder:opacity-20"
+              rows={3} 
             />
-            <div className="flex gap-3">
-              <button
-                onClick={submitFeedback}
-                className="flex-1 bg-green-600 text-white py-2 rounded-lg"
-              >
-                Complete & Send Thank You
-              </button>
-              <button
-                onClick={() => setShowFeedbackModal(null)}
-                className="flex-1 bg-gray-300 py-2 rounded-lg"
-              >
-                Cancel
-              </button>
+            <div className="flex flex-col gap-4">
+              <button onClick={submitFeedback} className="bg-[#D4A843] text-[#0a0a0a] py-5 rounded-2xl font-black text-xs uppercase tracking-[0.2em] shadow-lg shadow-[#D4A843]/20 active:scale-95 transition-all">Finish & Send SMS</button>
+              <button onClick={() => setShowFeedbackModal(null)} className="text-[10px] font-black opacity-30 uppercase tracking-[0.3em] py-2">Go Back</button>
             </div>
           </div>
         </div>
