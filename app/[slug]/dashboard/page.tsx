@@ -10,14 +10,15 @@ export default function DashboardPage() {
   const router = useRouter();
   const searchParams = useSearchParams();
   const accessCode = searchParams.get('code');
-  
+
   const [activeTab, setActiveTab] = useState<'bookings' | 'settings'>('bookings');
-  const [filter, setFilter] = useState<'pending' | 'active' | 'done'>('active');
+  const [filter, setFilter] = useState<'pending' | 'active' | 'done' | 'cancelled'>('active');
   const [business, setBusiness] = useState<any>(null);
-  const [bookings, setBookings] = useState<{pending: any[], active: any[], done: any[]}>({ 
+  const [bookings, setBookings] = useState<{pending: any[], active: any[], done: any[], cancelled: any[]}>({ 
     pending: [], 
     active: [], 
-    done: [] 
+    done: [], 
+    cancelled: [] 
   });
   const [loading, setLoading] = useState(true);
   const [copied, setCopied] = useState(false);
@@ -27,21 +28,30 @@ export default function DashboardPage() {
     const slug = window.location.pathname.split('/')[1];
     if (!pin) { router.push('/login'); return; }
 
-    const { data: biz } = await supabase.from('businesses').select('*').eq('slug', slug).eq('access_code', pin).single();
-    if (!biz) { router.push('/login'); return; }
-    
+    const { data: biz, error: bizError } = await supabase.from('businesses').select('*').eq('slug', slug).eq('access_code', pin).single();
+    if (bizError || !biz) { 
+      router.push('/login'); 
+      return; 
+    }
+
     setBusiness(biz);
     localStorage.setItem('nt_pin', pin as string);
 
     const { data: bks } = await supabase.from('bookings').select('*').eq('business_id', biz.id).order('booking_time', { ascending: true });
-    
-    const p: any = [], c: any = [], d: any = [];
+
+    const p: any = [], c: any = [], d: any = [], can: any = [];
     (bks || []).forEach(b => {
-      if (b.status === 'completed') d.push(b);
-      else if (b.status === 'confirmed' || b.deposit_paid) c.push(b);
-      else p.push(b);
+      if (b.status === 'cancelled') {
+        can.push(b);
+      } else if (b.status === 'completed') {
+        d.push(b);
+      } else if (b.status === 'confirmed' || b.deposit_paid) {
+        c.push(b);
+      } else if (b.status === 'pending') {
+        p.push(b);
+      }
     });
-    setBookings({ pending: p, active: c, done: d });
+    setBookings({ pending: p, active: c, done: d, cancelled: can });
     setLoading(false);
   };
 
@@ -49,41 +59,27 @@ export default function DashboardPage() {
     fetchData();
   }, [accessCode]);
 
-  // MOVE LOGIC: Updates DB then moves item in local state (No Refresh)
   const updateStatus = async (id: string, newStatus: string) => {
     const updates: any = { status: newStatus };
-    if (newStatus === 'confirmed') updates.deposit_paid = true;
+    
+    if (newStatus === 'confirmed') {
+      updates.deposit_paid = true;
+    }
+    
+    if (newStatus === 'cancelled') {
+      updates.cancelled_at = new Date().toISOString();
+    }
 
     const { error } = await supabase.from('bookings').update(updates).eq('id', id);
-    
+
     if (!error) {
-      setBookings(prev => {
-        // 1. Find the booking in any of the lists
-        const all = [...prev.pending, ...prev.active, ...prev.done];
-        const item = all.find(b => b.id === id);
-        if (!item) return prev;
-
-        const updatedItem = { ...item, ...updates };
-
-        // 2. Remove from old lists and add to the correct new list
-        return {
-          pending: prev.pending.filter(b => b.id !== id),
-          active: newStatus === 'confirmed' ? [...prev.active, updatedItem] : prev.active.filter(b => b.id !== id),
-          done: newStatus === 'completed' ? [...prev.done, updatedItem] : prev.done.filter(b => b.id !== id),
-        };
-      });
+      fetchData(); // Refresh all data
     }
   };
 
-  const deleteBooking = async (id: string) => {
-    const { error } = await supabase.from('bookings').delete().eq('id', id);
-    if (!error) {
-      setBookings(prev => ({
-        pending: prev.pending.filter(b => b.id !== id),
-        active: prev.active.filter(b => b.id !== id),
-        done: prev.done.filter(b => b.id !== id),
-      }));
-    }
+  const cancelBooking = async (id: string) => {
+    if (!confirm('❌ Cancel this booking? The customer will be notified.')) return;
+    await updateStatus(id, 'cancelled');
   };
 
   if (loading) return <div className="min-h-screen bg-[#0a0a0a] flex items-center justify-center"><div className="w-8 h-8 border-2 border-[#D4A843] border-t-transparent rounded-full animate-spin"></div></div>;
@@ -111,24 +107,28 @@ export default function DashboardPage() {
 
         {activeTab === 'bookings' ? (
           <div className="space-y-10">
-            <div className="grid grid-cols-3 gap-4">
+            <div className="grid grid-cols-4 gap-3">
               <button onClick={() => setFilter('pending')} className={`bg-[#141414] aspect-square rounded-[35px] flex flex-col items-center justify-center border transition-all ${filter === 'pending' ? 'border-orange-400 scale-105' : 'border-[#f0ede6]/5'}`}>
-                <p className="text-[8px] font-black opacity-30 mb-1">PENDING</p>
-                <p className="text-3xl font-black text-orange-400">{bookings.pending.length}</p>
+                <p className="text-[7px] font-black opacity-30 mb-1">PENDING</p>
+                <p className="text-2xl font-black text-orange-400">{bookings.pending.length}</p>
               </button>
               <button onClick={() => setFilter('active')} className={`bg-[#141414] aspect-square rounded-[35px] flex flex-col items-center justify-center border transition-all ${filter === 'active' ? 'border-[#D4A843] scale-105' : 'border-[#f0ede6]/5'}`}>
-                <p className="text-[8px] font-black opacity-30 mb-1">ACTIVE</p>
-                <p className="text-3xl font-black text-[#D4A843]">{bookings.active.length}</p>
+                <p className="text-[7px] font-black opacity-30 mb-1">ACTIVE</p>
+                <p className="text-2xl font-black text-[#D4A843]">{bookings.active.length}</p>
               </button>
               <button onClick={() => setFilter('done')} className={`bg-[#141414] aspect-square rounded-[35px] flex flex-col items-center justify-center border transition-all ${filter === 'done' ? 'border-slate-500 scale-105' : 'border-[#f0ede6]/5'}`}>
-                <p className="text-[8px] font-black opacity-30 mb-1">DONE</p>
-                <p className="text-3xl font-black text-slate-500">{bookings.done.length}</p>
+                <p className="text-[7px] font-black opacity-30 mb-1">DONE</p>
+                <p className="text-2xl font-black text-slate-500">{bookings.done.length}</p>
+              </button>
+              <button onClick={() => setFilter('cancelled')} className={`bg-[#141414] aspect-square rounded-[35px] flex flex-col items-center justify-center border transition-all ${filter === 'cancelled' ? 'border-red-500 scale-105' : 'border-[#f0ede6]/5'}`}>
+                <p className="text-[7px] font-black opacity-30 mb-1">CANCELLED</p>
+                <p className="text-2xl font-black text-red-500">{bookings.cancelled.length}</p>
               </button>
             </div>
 
             <section className="space-y-4">
               <h2 className="text-[10px] font-black text-[#D4A843] uppercase tracking-[0.3em] mb-2 opacity-60">
-                {filter === 'pending' ? 'Awaiting Activation' : filter === 'active' ? 'Live Schedule' : 'Completed'}
+                {filter === 'pending' ? 'Awaiting Payment' : filter === 'active' ? 'Confirmed Schedule' : filter === 'done' ? 'Completed Services' : 'Cancelled Bookings'}
               </h2>
               {bookings[filter].map((b: any) => (
                 <BookingCard 
@@ -136,7 +136,7 @@ export default function DashboardPage() {
                   booking={b} 
                   type={filter} 
                   onUpdate={updateStatus} 
-                  onDelete={deleteBooking} 
+                  onCancel={cancelBooking} 
                 />
               ))}
               {bookings[filter].length === 0 && (
