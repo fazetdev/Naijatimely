@@ -1,7 +1,7 @@
 'use client';
 
 import { useEffect, useState } from 'react';
-import QRCode from 'qrcode.react';
+import { QRCodeSVG } from 'qrcode.react';
 
 interface Service {
   name: string;
@@ -167,7 +167,7 @@ export default function PublicBookingPage({ params }: { params: { slug: string }
   }
 
   if (bookingComplete) {
-    const bookingUrl = `https://naijatimely.ng/${business?.slug}/booking/${bookingId}`;
+    const bookingUrl = `https://naijatimely.vercel.app/${business?.slug}/booking/${bookingId}`;
     return (
       <div className="min-h-screen bg-[#0a0a0a] flex items-center justify-center p-6">
         <div className="bg-[#141414] rounded-2xl p-8 text-center max-w-sm w-full border border-[#D4A843]/20">
@@ -177,7 +177,7 @@ export default function PublicBookingPage({ params }: { params: { slug: string }
           
           {/* QR Code Section */}
           <div className="bg-white p-4 rounded-xl inline-block mx-auto mb-6">
-            <QRCode value={bookingUrl} size={160} level="H" />
+            <QRCodeSVG value={bookingUrl} size={160} level="H" />
           </div>
           <p className="text-[8px] text-gray-500 mb-4">Show this QR code at your appointment</p>
           
