@@ -1,6 +1,7 @@
 'use client';
 
 import { useEffect, useState } from 'react';
+import QRCode from 'qrcode.react';
 
 interface Service {
   name: string;
@@ -33,6 +34,7 @@ export default function PublicBookingPage({ params }: { params: { slug: string }
   const [customerPhone, setCustomerPhone] = useState('');
   const [submitting, setSubmitting] = useState(false);
   const [bookingComplete, setBookingComplete] = useState(false);
+  const [bookingId, setBookingId] = useState('');
   const [showBankDetails, setShowBankDetails] = useState(false);
   const [copied, setCopied] = useState(false);
   const [availableTimes, setAvailableTimes] = useState<string[]>([]);
@@ -56,7 +58,6 @@ export default function PublicBookingPage({ params }: { params: { slug: string }
     loadBusiness();
   }, [params.slug, hasMounted]);
 
-  // Generate time slots
   useEffect(() => {
     if (!selectedService) {
       setAvailableTimes([]);
@@ -129,6 +130,7 @@ export default function PublicBookingPage({ params }: { params: { slug: string }
         return;
       }
 
+      setBookingId(data.booking.id);
       setBookingComplete(true);
       setShowBankDetails(false);
     } catch (err) {
@@ -165,15 +167,37 @@ export default function PublicBookingPage({ params }: { params: { slug: string }
   }
 
   if (bookingComplete) {
+    const bookingUrl = `https://naijatimely.ng/${business?.slug}/booking/${bookingId}`;
     return (
       <div className="min-h-screen bg-[#0a0a0a] flex items-center justify-center p-6">
-        <div className="bg-[#141414] rounded-2xl p-10 text-center max-w-sm border border-[#D4A843]/20">
+        <div className="bg-[#141414] rounded-2xl p-8 text-center max-w-sm w-full border border-[#D4A843]/20">
           <div className="w-16 h-16 bg-green-600/20 text-green-500 rounded-full flex items-center justify-center mx-auto mb-6 text-3xl">✓</div>
-          <h1 className="text-xl font-black text-[#D4A843] uppercase tracking-tighter mb-2">Booking Sent!</h1>
+          <h1 className="text-xl font-black text-[#D4A843] uppercase tracking-tighter mb-2">Booking Confirmed!</h1>
           <p className="text-gray-400 text-sm mb-6">{business?.name} will confirm via WhatsApp.</p>
-          <button onClick={() => window.location.reload()} className="w-full bg-[#D4A843] text-[#0a0a0a] font-black py-3 rounded-xl uppercase text-xs tracking-widest">
-            New Appointment
-          </button>
+          
+          {/* QR Code Section */}
+          <div className="bg-white p-4 rounded-xl inline-block mx-auto mb-6">
+            <QRCode value={bookingUrl} size={160} level="H" />
+          </div>
+          <p className="text-[8px] text-gray-500 mb-4">Show this QR code at your appointment</p>
+          
+          <div className="flex gap-3">
+            <button 
+              onClick={() => {
+                navigator.clipboard.writeText(bookingUrl);
+                alert('Link copied!');
+              }}
+              className="flex-1 bg-[#D4A843]/20 text-[#D4A843] py-2 rounded-xl text-[10px] font-black uppercase tracking-widest"
+            >
+              Copy Link
+            </button>
+            <button 
+              onClick={() => window.location.reload()} 
+              className="flex-1 bg-[#D4A843] text-[#0a0a0a] py-2 rounded-xl text-[10px] font-black uppercase tracking-widest"
+            >
+              New Appointment
+            </button>
+          </div>
         </div>
       </div>
     );
@@ -228,14 +252,12 @@ export default function PublicBookingPage({ params }: { params: { slug: string }
   return (
     <div className="min-h-screen bg-[#0a0a0a] py-10 px-4">
       <div className="max-w-lg mx-auto">
-        {/* Header */}
         <div className="text-center mb-8">
           <h1 className="text-3xl font-black uppercase tracking-tighter text-[#D4A843]">{business?.name}</h1>
           <div className="h-0.5 w-12 bg-[#D4A843] mx-auto mt-3 opacity-50"></div>
           <p className="text-[9px] font-black uppercase tracking-[0.3em] text-gray-500 mt-3">Book Appointment</p>
         </div>
 
-        {/* Form Card */}
         <div className="bg-[#141414] rounded-2xl border border-[#D4A843]/20 overflow-hidden">
           <div className="p-6 space-y-8">
             {error && (
@@ -244,7 +266,6 @@ export default function PublicBookingPage({ params }: { params: { slug: string }
               </div>
             )}
             
-            {/* Step 1: Select Service */}
             <div>
               <label className="text-[9px] font-black text-[#D4A843] uppercase tracking-[0.2em] block mb-4">
                 01 — SELECT SERVICE
@@ -281,7 +302,6 @@ export default function PublicBookingPage({ params }: { params: { slug: string }
               </div>
             </div>
 
-            {/* Step 2: Select Time */}
             {selectedService && (
               <div className="animate-in fade-in slide-in-from-bottom-2 duration-300">
                 <label className="text-[9px] font-black text-[#D4A843] uppercase tracking-[0.2em] block mb-4">
@@ -306,7 +326,6 @@ export default function PublicBookingPage({ params }: { params: { slug: string }
               </div>
             )}
 
-            {/* Step 3: Contact Info */}
             {selectedTime && (
               <div className="space-y-4 animate-in fade-in slide-in-from-bottom-2 duration-300">
                 <label className="text-[9px] font-black text-[#D4A843] uppercase tracking-[0.2em] block">
@@ -337,7 +356,6 @@ export default function PublicBookingPage({ params }: { params: { slug: string }
               </div>
             )}
 
-            {/* Submit Button */}
             <button
               onClick={handleProceedToPayment}
               disabled={!selectedService || !selectedTime || !customerName || !validatePhone(customerPhone) || submitting}
@@ -348,7 +366,6 @@ export default function PublicBookingPage({ params }: { params: { slug: string }
           </div>
         </div>
 
-        {/* Footer Note */}
         <p className="text-center text-[8px] text-gray-600 mt-6">
           You'll receive confirmation on WhatsApp
         </p>
