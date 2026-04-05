@@ -34,11 +34,10 @@ export default function PublicBookingPage({ params }: { params: { slug: string }
   const [submitting, setSubmitting] = useState(false);
   const [bookingComplete, setBookingComplete] = useState(false);
   const [showBankDetails, setShowBankDetails] = useState(false);
-  const [depositAmount, setDepositAmount] = useState(0);
+  const [copied, setCopied] = useState(false);
   const [availableTimes, setAvailableTimes] = useState<string[]>([]);
-  const [fetchingSlots, setFetchingSlots] = useState(false);
 
-  useEffect(() => { setHasMounted(true); }, []);
+  useEffect(() => setHasMounted(true), []);
 
   useEffect(() => {
     if (!hasMounted) return;
@@ -57,47 +56,36 @@ export default function PublicBookingPage({ params }: { params: { slug: string }
     loadBusiness();
   }, [params.slug, hasMounted]);
 
+  // Generate time slots
   useEffect(() => {
-    if (!selectedService || !business) return;
-    async function fetchSlots() {
-      setFetchingSlots(true);
-      try {
-        const res = await fetch(`/api/bookings/available-slots?slug=${business?.slug}&service=${encodeURIComponent(selectedService?.name || '')}`);
-        const data = await res.json();
-        setAvailableTimes(data.slots || []);
-        setSelectedTime(''); 
-      } catch (err) {
-        console.error("Failed to fetch slots");
-      } finally {
-        setFetchingSlots(false);
-      }
+    if (!selectedService) {
+      setAvailableTimes([]);
+      return;
     }
-    fetchSlots();
-  }, [selectedService, business]);
-
-  useEffect(() => {
-    if (selectedService && business) {
-      const amount = Math.ceil((selectedService.price * business.deposit_amount) / 100);
-      setDepositAmount(amount);
+    const slots: string[] = [];
+    for (let hour = 9; hour < 18; hour++) {
+      slots.push(`${hour.toString().padStart(2, '0')}:00`);
     }
-  }, [selectedService, business]);
+    setAvailableTimes(slots);
+    setSelectedTime('');
+  }, [selectedService]);
 
-  const validatePhone = (phone: string) => {
-    const regex = /^(070|080|081|090|091)\d{8}$/;
-    return regex.test(phone);
-  };
+  const validatePhone = (phone: string) => /^(070|080|081|090|091|020)\d{8}$/.test(phone);
+
+  const depositAmount = selectedService 
+    ? Math.ceil((selectedService.price * (business?.deposit_amount || 0)) / 100) 
+    : 0;
 
   const handleProceedToPayment = () => {
     if (!selectedService || !selectedTime || !customerName || !customerPhone) {
-      setError('Please fill all fields');
+      setError('Please complete all steps.');
       return;
     }
     if (!validatePhone(customerPhone)) {
-      setError('Invalid Nigerian phone number. Must be 11 digits starting with 070, 080, 081, 090, or 091.');
+      setError('Invalid phone number. Use 070, 080, 081, 090, or 091.');
       return;
     }
     setError('');
-
     if (business?.require_deposit && depositAmount > 0) {
       setShowBankDetails(true);
     } else {
@@ -110,9 +98,15 @@ export default function PublicBookingPage({ params }: { params: { slug: string }
     setSubmitting(true);
     setError('');
 
+    let formattedPhone = customerPhone.replace(/\D/g, '');
+    if (formattedPhone.startsWith('0')) formattedPhone = '234' + formattedPhone.substring(1);
+
     try {
-      const today = new Date().toISOString().split('T')[0]; 
-      
+      const today = new Date().toISOString().split('T')[0];
+      const [hours, minutes] = selectedTime.split(':');
+      const bookingDateTime = new Date();
+      bookingDateTime.setHours(parseInt(hours), parseInt(minutes), 0, 0);
+
       const response = await fetch('/api/booking/create', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
@@ -120,157 +114,244 @@ export default function PublicBookingPage({ params }: { params: { slug: string }
           business_slug: business.slug,
           service: selectedService.name,
           service_price: selectedService.price,
-          time: `${today}T${selectedTime}:00`,
+          time: bookingDateTime.toISOString(),
           customer_name: customerName,
-          whatsapp: customerPhone,
+          whatsapp: formattedPhone,
           deposit_amount: depositAmount
         })
       });
 
       const data = await response.json();
-
       if (!response.ok) {
-        // SELF-HEALING LOGIC: Handle stale slots
-        setError(data.error || 'This slot was just taken by someone else.');
+        setError(data.error || 'Slot no longer available.');
         setSelectedTime('');
-        
-        if (selectedService && business) {
-          setFetchingSlots(true);
-          try {
-            const slotsRes = await fetch(`/api/bookings/available-slots?slug=${business.slug}&service=${encodeURIComponent(selectedService.name)}`);
-            const slotsData = await slotsRes.json();
-            setAvailableTimes(slotsData.slots || []);
-          } catch (err) {
-            console.error("Failed to refresh slots");
-          } finally {
-            setFetchingSlots(false);
-          }
-        }
+        setShowBankDetails(false);
         return;
       }
 
       setBookingComplete(true);
       setShowBankDetails(false);
     } catch (err) {
-      setError('Connection error. Please check your internet.');
+      setError('Connection error. Please try again.');
     } finally {
       setSubmitting(false);
     }
   };
 
-  if (!hasMounted || loading) return (
-    <div className="min-h-screen bg-gray-50 flex items-center justify-center text-gray-500 font-medium">Loading...</div>
-  );
+  const copyAccount = () => {
+    if (business?.bank_account) {
+      navigator.clipboard.writeText(business.bank_account);
+      setCopied(true);
+      setTimeout(() => setCopied(false), 2000);
+    }
+  };
 
-  if (error && !business) return (
-    <div className="min-h-screen bg-gray-50 flex items-center justify-center px-4 text-center">
-      <div className="bg-white rounded-2xl p-8 shadow-sm border border-gray-100 max-w-sm">
-        <div className="text-red-500 text-6xl mb-4">×</div>
-        <h1 className="text-xl font-bold text-gray-900">Not Found</h1>
-        <p className="text-gray-500 mt-2 text-sm">The business link is invalid or expired.</p>
+  if (!hasMounted || loading) {
+    return (
+      <div className="min-h-screen bg-[#0a0a0a] flex items-center justify-center">
+        <div className="w-8 h-8 border-2 border-[#D4A843] border-t-transparent rounded-full animate-spin"></div>
       </div>
-    </div>
-  );
+    );
+  }
 
-  if (bookingComplete) return (
-    <div className="min-h-screen bg-gray-50 flex items-center justify-center px-4">
-      <div className="bg-white rounded-2xl p-8 text-center max-w-md shadow-sm border border-gray-100">
-        <div className="text-green-500 text-6xl mb-4">✓</div>
-        <h1 className="text-2xl font-bold mb-2">Booking Sent!</h1>
-        <p className="text-gray-600 mb-6 font-medium">Thank you. <span className="text-gray-900 font-bold">{business?.name}</span> will contact you on WhatsApp to confirm.</p>
-        <button onClick={() => window.location.reload()} className="text-green-600 font-bold underline">Book another appointment</button>
+  if (error && !business) {
+    return (
+      <div className="min-h-screen bg-[#0a0a0a] flex items-center justify-center p-6">
+        <div className="bg-[#141414] rounded-2xl p-8 text-center border border-[#D4A843]/20">
+          <p className="text-red-500 text-sm">{error}</p>
+        </div>
       </div>
-    </div>
-  );
+    );
+  }
 
-  if (showBankDetails && business?.require_deposit && selectedService) return (
-    <div className="min-h-screen bg-gray-50 flex items-center justify-center px-4 py-8">
-      <div className="bg-white rounded-2xl shadow-xl p-6 max-w-md w-full border border-gray-100">
-        <div className="text-center mb-6">
-          <div className="text-yellow-500 text-5xl mb-3">💸</div>
-          <h1 className="text-xl font-bold text-gray-900">Secure Your Slot</h1>
-          <p className="text-gray-500 text-sm mt-1">Pay deposit to the account below</p>
-        </div>
-
-        <div className="bg-yellow-50 border border-yellow-100 rounded-xl p-4 mb-6">
-          <p className="text-sm font-bold text-yellow-800 text-center">Deposit: ₦{depositAmount.toLocaleString()}</p>
-        </div>
-
-        <div className="bg-gray-50 rounded-xl p-5 space-y-4 mb-6">
-          <div>
-            <p className="text-[10px] text-gray-400 uppercase font-bold">Bank Name</p>
-            <p className="font-semibold text-gray-800">{business.bank_name}</p>
-          </div>
-          <div>
-            <p className="text-[10px] text-gray-400 uppercase font-bold">Account Number</p>
-            <p className="text-xl font-mono font-bold text-green-700 tracking-wider">{business.bank_account}</p>
-          </div>
-          <div>
-            <p className="text-[10px] text-gray-400 uppercase font-bold">Account Name</p>
-            <p className="font-semibold text-gray-800">{business.account_name}</p>
-          </div>
-        </div>
-
-        <button onClick={handleConfirmBooking} disabled={submitting} className="w-full bg-green-600 hover:bg-green-700 text-white font-bold py-4 rounded-xl shadow-lg transition disabled:opacity-50 active:scale-95">
-          {submitting ? 'Verifying...' : 'I Have Paid ₦' + depositAmount.toLocaleString()}
-        </button>
-
-        <button onClick={() => setShowBankDetails(false)} className="w-full mt-4 text-sm text-gray-400 font-medium py-2">
-          ← Go Back
-        </button>
-      </div>
-    </div>
-  );
-
-  return (
-    <div className="min-h-screen bg-gray-50 py-6 px-4">
-      <div className="max-w-lg mx-auto bg-white rounded-3xl shadow-xl border border-gray-100 overflow-hidden">
-        <div className="bg-green-600 p-8 text-white text-center">
-          <h1 className="text-2xl font-bold">{business?.name}</h1>
-          <p className="text-xs opacity-75 mt-1 font-bold uppercase tracking-widest">Book Your Session</p>
-        </div>
-
-        <div className="p-6 space-y-8">
-          {error && <div className="bg-red-50 text-red-600 p-4 rounded-xl text-sm font-bold border border-red-100">{error}</div>}
-
-          <section>
-            <label className="text-[10px] font-black text-gray-400 uppercase mb-4 block tracking-tighter">1. Select a Service</label>
-            <div className="grid gap-3">
-              {business?.services.map((s) => (
-                <button key={s.name} onClick={() => setSelectedService(s)} className={`p-5 rounded-2xl border-2 text-left transition-all ${selectedService?.name === s.name ? 'border-green-600 bg-green-50 shadow-inner' : 'border-gray-50 bg-gray-50/50 hover:border-green-200'}`}>
-                  <div className="flex justify-between font-bold text-gray-900"><span>{s.name}</span><span>₦{s.price.toLocaleString()}</span></div>
-                  <p className="text-xs text-gray-500 mt-1">{s.duration} minutes</p>
-                </button>
-              ))}
-            </div>
-          </section>
-
-          {selectedService && (
-            <section className="animate-in fade-in slide-in-from-bottom-2 duration-300">
-              <label className="text-[10px] font-black text-gray-400 uppercase mb-4 block tracking-tighter">2. Pick an Available Time {fetchingSlots && '...'}</label>
-              <div className="grid grid-cols-3 gap-2">
-                {availableTimes.length > 0 ? availableTimes.map(t => (
-                  <button key={t} onClick={() => setSelectedTime(t)} className={`py-3 rounded-xl font-bold text-sm border-2 transition-all ${selectedTime === t ? 'bg-green-600 border-green-600 text-white shadow-md' : 'border-gray-100 text-gray-600 bg-gray-50/30'}`}>{t}</button>
-                )) : <p className="col-span-3 text-xs text-gray-400 italic py-4 text-center">No more slots for today.</p>}
-              </div>
-            </section>
-          )}
-
-          {selectedTime && (
-            <section className="space-y-4 animate-in fade-in slide-in-from-bottom-2 duration-300">
-              <label className="text-[10px] font-black text-gray-400 uppercase block tracking-tighter">3. Your Contact Details</label>
-              <input type="text" placeholder="Your Full Name" value={customerName} onChange={e => setCustomerName(e.target.value)} className="w-full p-4 bg-gray-50 rounded-xl border border-gray-100 focus:ring-2 focus:ring-green-500 outline-none transition-all font-medium" />
-              <div className="space-y-1">
-                <input type="tel" placeholder="WhatsApp Number (11 digits)" value={customerPhone} onChange={e => setCustomerPhone(e.target.value)} maxLength={11} className={`w-full p-4 bg-gray-50 rounded-xl border transition-all focus:ring-2 focus:ring-green-500 outline-none font-medium ${customerPhone.length === 11 && !validatePhone(customerPhone) ? 'border-red-300' : 'border-gray-100'}`} />
-                {customerPhone.length === 11 && !validatePhone(customerPhone) && <p className="text-[10px] text-red-500 font-bold ml-2 uppercase">Invalid Nigerian Format</p>}
-              </div>
-            </section>
-          )}
-
-          <button onClick={handleProceedToPayment} disabled={submitting || !selectedTime || !customerName || !validatePhone(customerPhone)} className="w-full bg-green-600 text-white font-bold py-5 rounded-2xl shadow-xl shadow-green-100 disabled:opacity-20 active:scale-95 transition-all mt-4">
-            {submitting ? 'Processing...' : business?.require_deposit ? 'Review & Pay Deposit' : 'Confirm My Appointment'}
+  if (bookingComplete) {
+    return (
+      <div className="min-h-screen bg-[#0a0a0a] flex items-center justify-center p-6">
+        <div className="bg-[#141414] rounded-2xl p-10 text-center max-w-sm border border-[#D4A843]/20">
+          <div className="w-16 h-16 bg-green-600/20 text-green-500 rounded-full flex items-center justify-center mx-auto mb-6 text-3xl">✓</div>
+          <h1 className="text-xl font-black text-[#D4A843] uppercase tracking-tighter mb-2">Booking Sent!</h1>
+          <p className="text-gray-400 text-sm mb-6">{business?.name} will confirm via WhatsApp.</p>
+          <button onClick={() => window.location.reload()} className="w-full bg-[#D4A843] text-[#0a0a0a] font-black py-3 rounded-xl uppercase text-xs tracking-widest">
+            New Appointment
           </button>
         </div>
+      </div>
+    );
+  }
+
+  if (showBankDetails && business?.require_deposit && selectedService) {
+    return (
+      <div className="min-h-screen bg-[#0a0a0a] flex items-center justify-center p-4">
+        <div className="bg-[#141414] rounded-2xl shadow-2xl p-8 max-w-md w-full border border-[#D4A843]/20">
+          <div className="text-center mb-8">
+            <p className="text-[9px] font-black text-[#D4A843] uppercase tracking-[0.3em] mb-1">Final Step</p>
+            <h1 className="text-2xl font-black text-[#f0ede6] uppercase tracking-tighter">Pay Deposit</h1>
+          </div>
+          
+          <div className="bg-[#0a0a0a] rounded-xl p-6 mb-8 text-center border border-[#D4A843]/10">
+            <p className="text-[9px] font-black text-[#D4A843] uppercase tracking-widest mb-1 opacity-60">Amount to Pay</p>
+            <p className="text-3xl font-black text-[#D4A843]">₦{depositAmount.toLocaleString()}</p>
+            <p className="text-[8px] text-gray-500 mt-1">({business.deposit_amount}% of ₦{selectedService.price})</p>
+          </div>
+
+          <div className="space-y-5 mb-8 bg-[#0a0a0a] p-5 rounded-xl border border-[#D4A843]/10">
+            <div>
+              <p className="text-[8px] text-gray-500 uppercase font-black tracking-widest mb-1">Bank Name</p>
+              <p className="font-bold text-[#f0ede6] text-sm uppercase">{business.bank_name}</p>
+            </div>
+            <div>
+              <p className="text-[8px] text-gray-500 uppercase font-black tracking-widest mb-1">Account Number</p>
+              <div className="flex justify-between items-center">
+                <p className="font-mono font-black text-[#D4A843] text-xl tracking-tighter">{business.bank_account}</p>
+                <button onClick={copyAccount} className="text-[8px] font-black bg-[#141414] border border-[#D4A843]/20 px-3 py-2 rounded-lg uppercase">
+                  {copied ? 'Copied!' : 'Copy'}
+                </button>
+              </div>
+            </div>
+            <div>
+              <p className="text-[8px] text-gray-500 uppercase font-black tracking-widest mb-1">Account Name</p>
+              <p className="font-bold text-[#f0ede6] text-sm uppercase">{business.account_name}</p>
+            </div>
+          </div>
+
+          <button onClick={handleConfirmBooking} disabled={submitting} className="w-full bg-[#D4A843] text-[#0a0a0a] font-black py-4 rounded-xl uppercase text-xs tracking-widest active:scale-95 transition-all">
+            {submitting ? 'Processing...' : `I Have Paid ₦${depositAmount.toLocaleString()}`}
+          </button>
+          <button onClick={() => setShowBankDetails(false)} className="w-full mt-3 text-[9px] text-gray-500 font-black uppercase tracking-widest py-2">
+            ← Go Back
+          </button>
+        </div>
+      </div>
+    );
+  }
+
+  return (
+    <div className="min-h-screen bg-[#0a0a0a] py-10 px-4">
+      <div className="max-w-lg mx-auto">
+        {/* Header */}
+        <div className="text-center mb-8">
+          <h1 className="text-3xl font-black uppercase tracking-tighter text-[#D4A843]">{business?.name}</h1>
+          <div className="h-0.5 w-12 bg-[#D4A843] mx-auto mt-3 opacity-50"></div>
+          <p className="text-[9px] font-black uppercase tracking-[0.3em] text-gray-500 mt-3">Book Appointment</p>
+        </div>
+
+        {/* Form Card */}
+        <div className="bg-[#141414] rounded-2xl border border-[#D4A843]/20 overflow-hidden">
+          <div className="p-6 space-y-8">
+            {error && (
+              <div className="bg-red-600/10 border border-red-600/30 text-red-400 p-3 rounded-xl text-[10px] font-black uppercase tracking-widest text-center">
+                {error}
+              </div>
+            )}
+            
+            {/* Step 1: Select Service */}
+            <div>
+              <label className="text-[9px] font-black text-[#D4A843] uppercase tracking-[0.2em] block mb-4">
+                01 — SELECT SERVICE
+              </label>
+              <div className="grid gap-3">
+                {business?.services.map((service, idx) => {
+                  const isSelected = selectedService?.name === service.name;
+                  const serviceDeposit = business.require_deposit 
+                    ? Math.ceil((service.price * business.deposit_amount) / 100)
+                    : 0;
+                  return (
+                    <button
+                      key={idx}
+                      onClick={() => setSelectedService(service)}
+                      className={`p-5 rounded-xl border-2 text-left transition-all ${
+                        isSelected 
+                          ? 'border-[#D4A843] bg-[#D4A843]/10' 
+                          : 'border-[#f0ede6]/10 bg-[#0a0a0a] hover:border-[#D4A843]/30'
+                      }`}
+                    >
+                      <div className="flex justify-between items-center">
+                        <span className="font-bold text-[#f0ede6] uppercase text-sm tracking-tight">{service.name}</span>
+                        <span className="text-[#D4A843] font-black">₦{service.price.toLocaleString()}</span>
+                      </div>
+                      <div className="flex justify-between items-center mt-2">
+                        <p className="text-[9px] text-gray-500 font-bold uppercase tracking-tighter">{service.duration} minutes</p>
+                        {business.require_deposit && (
+                          <p className="text-[8px] text-[#D4A843]/60">Deposit: ₦{serviceDeposit}</p>
+                        )}
+                      </div>
+                    </button>
+                  );
+                })}
+              </div>
+            </div>
+
+            {/* Step 2: Select Time */}
+            {selectedService && (
+              <div className="animate-in fade-in slide-in-from-bottom-2 duration-300">
+                <label className="text-[9px] font-black text-[#D4A843] uppercase tracking-[0.2em] block mb-4">
+                  02 — CHOOSE TIME
+                </label>
+                <div className="grid grid-cols-3 gap-2">
+                  {availableTimes.map((time) => (
+                    <button
+                      key={time}
+                      onClick={() => setSelectedTime(time)}
+                      className={`py-3 rounded-xl font-black text-xs border transition-all ${
+                        selectedTime === time
+                          ? 'bg-[#D4A843] border-[#D4A843] text-[#0a0a0a]'
+                          : 'border-[#f0ede6]/10 bg-[#0a0a0a] text-gray-400 hover:border-[#D4A843]/30'
+                      }`}
+                    >
+                      {time}
+                    </button>
+                  ))}
+                </div>
+                <p className="text-[8px] text-gray-600 text-center mt-3">Business hours: 9am — 6pm</p>
+              </div>
+            )}
+
+            {/* Step 3: Contact Info */}
+            {selectedTime && (
+              <div className="space-y-4 animate-in fade-in slide-in-from-bottom-2 duration-300">
+                <label className="text-[9px] font-black text-[#D4A843] uppercase tracking-[0.2em] block">
+                  03 — YOUR DETAILS
+                </label>
+                <input
+                  type="text"
+                  placeholder="Full Name"
+                  value={customerName}
+                  onChange={(e) => setCustomerName(e.target.value.toUpperCase())}
+                  className="w-full p-4 bg-[#0a0a0a] border border-[#f0ede6]/10 rounded-xl focus:border-[#D4A843] focus:ring-1 focus:ring-[#D4A843] outline-none text-[#f0ede6] text-sm font-bold uppercase tracking-tight transition-all"
+                />
+                <input
+                  type="tel"
+                  placeholder="WhatsApp Number"
+                  value={customerPhone}
+                  onChange={(e) => setCustomerPhone(e.target.value)}
+                  maxLength={11}
+                  className={`w-full p-4 bg-[#0a0a0a] border rounded-xl focus:ring-1 focus:ring-[#D4A843] outline-none text-[#f0ede6] text-sm font-mono transition-all ${
+                    customerPhone.length === 11 && !validatePhone(customerPhone)
+                      ? 'border-red-600/50 focus:border-red-600'
+                      : 'border-[#f0ede6]/10 focus:border-[#D4A843]'
+                  }`}
+                />
+                {customerPhone.length === 11 && !validatePhone(customerPhone) && (
+                  <p className="text-[8px] text-red-500">Start with 070, 080, 081, 090, or 091</p>
+                )}
+              </div>
+            )}
+
+            {/* Submit Button */}
+            <button
+              onClick={handleProceedToPayment}
+              disabled={!selectedService || !selectedTime || !customerName || !validatePhone(customerPhone) || submitting}
+              className="w-full bg-[#D4A843] text-[#0a0a0a] font-black py-5 rounded-xl uppercase text-[10px] tracking-[0.3em] disabled:opacity-30 disabled:cursor-not-allowed active:scale-95 transition-all mt-4"
+            >
+              {submitting ? 'Processing...' : business?.require_deposit ? `Pay ₦${depositAmount} Deposit` : 'Confirm Booking'}
+            </button>
+          </div>
+        </div>
+
+        {/* Footer Note */}
+        <p className="text-center text-[8px] text-gray-600 mt-6">
+          You'll receive confirmation on WhatsApp
+        </p>
       </div>
     </div>
   );
